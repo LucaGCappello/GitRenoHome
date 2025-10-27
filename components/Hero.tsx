@@ -25,7 +25,8 @@ export default function Hero() {
       {/* Content */}
       <div className="relative mx-auto max-w-4xl px-4 py-32 text-center md:py-40">
         <h1 className="mb-6 text-5xl font-bold md:text-6xl">
-          We renovate your home. On time, with no surprises.
+          <br />We renovate your home.<br /><br />
+          On time, with no surprises.
         </h1>
         <p className="mb-10 text-xl text-blue-100 md:text-2xl">
           Transparent quotes, skilled craftsmen, written warranty.
