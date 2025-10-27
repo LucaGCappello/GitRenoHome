@@ -351,7 +351,7 @@ export default function GoogleReviewsCarousel({
             )}
           </>
         ) : (
-          'Depoimentos internos de clientes (exibição genérica).'
+          'Depoimentos internos de clientes.'
         )}
       </p>
     </section>
