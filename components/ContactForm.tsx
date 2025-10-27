@@ -298,7 +298,7 @@ export default function MultiStepQuoteForm() {
                   ['carpentry', 'Carpintaria'],
                   ['insulation', 'Isolamento'],
                   ['windows', 'Janelas/Portas'],
-                  ['outdoor', 'Exterior (terraço/jardim)'],
+                  ['outdoor', 'Exterior'],
                   ['other', 'Outro'],
                 ] as [Services, string][]
               ).map(([key, label]) => (
