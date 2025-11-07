@@ -138,6 +138,100 @@ function Modal({
   );
 }
 
+/* ---------- ESTIMATIVA AUTOMÁTICA ---------- */
+
+type EstimateItem = {
+  description: string;
+  unitPrice: number;
+  quantity: number;
+  total: number;
+};
+
+type Estimate = {
+  items: EstimateItem[];
+  materialsTotal: number;
+  labourTotal: number;
+  subtotal: number;
+  vatRate: number;
+  vatAmount: number;
+  totalWithVat: number;
+};
+
+const VAT_RATE = 0.23; // 23% IVA PT
+
+// preço base *por m²* para cada tipo de serviço (ajusta estes valores)
+const SERVICE_BASE_PRICES: Record<Services, number> = {
+  kitchen: 450,
+  bathroom: 500,
+  flooring: 35,
+  painting: 12,
+  electrical: 40,
+  plumbing: 45,
+  carpentry: 40,
+  insulation: 25,
+  windows: 30,
+  outdoor: 30,
+  other: 30,
+};
+
+function formatCurrency(value: number) {
+  return value.toLocaleString('pt-PT', {
+    style: 'currency',
+    currency: 'EUR',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  });
+}
+
+// Calcula um orçamento MUITO simples com base em serviços + área
+function calculateEstimate(data: FormState): Estimate {
+  const area = Number(data.areaM2) || 50; // se não indicar área, assumimos 50m²
+
+  let base = 0;
+  if (data.services.length === 0) {
+    base = 3000; // fallback mínimo
+  } else {
+    for (const svc of data.services) {
+      const rate = SERVICE_BASE_PRICES[svc] ?? 30;
+      base += rate * area;
+    }
+  }
+
+  // divisão simples 55% materiais / 45% mão de obra (podes ajustar)
+  const materialsTotal = base * 0.55;
+  const labourTotal = base * 0.45;
+  const subtotal = materialsTotal + labourTotal;
+  const vatAmount = subtotal * VAT_RATE;
+  const totalWithVat = subtotal + vatAmount;
+
+  const items: EstimateItem[] = [
+    {
+      description: 'Materiais (estimativa)',
+      unitPrice: materialsTotal,
+      quantity: 1,
+      total: materialsTotal,
+    },
+    {
+      description: 'Mão de obra (estimativa)',
+      unitPrice: labourTotal,
+      quantity: 1,
+      total: labourTotal,
+    },
+  ];
+
+  return {
+    items,
+    materialsTotal,
+    labourTotal,
+    subtotal,
+    vatRate: VAT_RATE,
+    vatAmount,
+    totalWithVat,
+  };
+}
+
+/* ---------- COMPONENTE PRINCIPAL ---------- */
+
 export default function MultiStepQuoteForm() {
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [data, setData] = useState<FormState>(EMPTY);
@@ -150,6 +244,9 @@ export default function MultiStepQuoteForm() {
   const [errorDetail, setErrorDetail] = useState<string>('');
 
   const formRef = useRef<HTMLFormElement | null>(null);
+
+  // estimativa automática com base nos dados do formulário
+  const estimate = useMemo(() => calculateEstimate(data), [data]);
 
   /* Autosave */
   useEffect(() => {
@@ -172,15 +269,21 @@ export default function MultiStepQuoteForm() {
 
   const canGoNext = useMemo(() => {
     if (step === 1) {
-      const hasServices = data.services.length > 0 || (data.services.includes('other') && !!data.otherServiceText.trim());
+      const hasServices =
+        data.services.length > 0 ||
+        (data.services.includes('other') && !!data.otherServiceText.trim());
       const projectOk = data.projectDescription.trim().length >= 10;
       const titleOk = data.projectTitle.trim().length >= 3;
       const propertyOk =
-        data.propertyType !== 'other' || (data.propertyType === 'other' && data.propertyOtherText.trim().length >= 2);
+        data.propertyType !== 'other' ||
+        (data.propertyType === 'other' && data.propertyOtherText.trim().length >= 2);
       return hasServices && projectOk && titleOk && propertyOk;
     }
     if (step === 2) {
-      const addressOk = data.address.trim().length >= 5 && data.city.trim().length >= 2 && data.postalCode.trim().length >= 4;
+      const addressOk =
+        data.address.trim().length >= 5 &&
+        data.city.trim().length >= 2 &&
+        data.postalCode.trim().length >= 4;
       const areaOk = data.areaM2 === '' || Number.isFinite(Number(data.areaM2));
       const roomsOk =
         (data.bedrooms === '' || Number.isFinite(Number(data.bedrooms))) &&
@@ -220,7 +323,8 @@ export default function MultiStepQuoteForm() {
       if (data.otherServiceText) formData.append('otherService', data.otherServiceText);
 
       formData.append('propertyType', data.propertyType);
-      if (data.propertyType === 'other' && data.propertyOtherText) formData.append('propertyOther', data.propertyOtherText);
+      if (data.propertyType === 'other' && data.propertyOtherText)
+        formData.append('propertyOther', data.propertyOtherText);
       formData.append('projectDescription', data.projectDescription);
 
       formData.append('address', data.address);
@@ -233,22 +337,32 @@ export default function MultiStepQuoteForm() {
       formData.append('timeline', data.timeline);
       formData.append('siteAccess', data.siteAccess);
 
-      // resumo sempre como 'message' (Formspree adora este campo)
+      // resumo sempre como 'message'
       const summary = `
 Projeto: ${data.projectTitle}
 Serviços: ${data.services.join(', ') || '-'}
-Tipo de imóvel: ${data.propertyType}${data.propertyType === 'other' && data.propertyOtherText ? ` (${data.propertyOtherText})` : ''}
+Tipo de imóvel: ${data.propertyType}${
+        data.propertyType === 'other' && data.propertyOtherText
+          ? ` (${data.propertyOtherText})`
+          : ''
+      }
 
 Descrição:
 ${data.projectDescription}
 
 Local: ${data.address}, ${data.city} ${data.postalCode}
-Área: ${data.areaM2 || '-'} m² | Quartos: ${data.bedrooms || '-'} | WCs: ${data.bathrooms || '-'}
+Área: ${data.areaM2 || '-'} m² | Quartos: ${data.bedrooms || '-'} | WCs: ${
+        data.bathrooms || '-'
+      }
 Orçamento: ${data.budgetRange} | Prazo: ${data.timeline} | Acesso: ${data.siteAccess}
 
 Contacto: ${data.name} | ${data.phone} | ${data.email}
 Preferência: ${data.preferredContact}
-Como nos conheceu: ${data.howHeard}${data.howHeard === 'other' && data.howHeardOtherText ? ` (${data.howHeardOtherText})` : ''}
+Como nos conheceu: ${data.howHeard}${
+        data.howHeard === 'other' && data.howHeardOtherText
+          ? ` (${data.howHeardOtherText})`
+          : ''
+      }
       `.trim();
       formData.append('message', summary);
 
@@ -263,7 +377,8 @@ Como nos conheceu: ${data.howHeard}${data.howHeard === 'other' && data.howHeardO
       formData.append('phone', data.phone);
       formData.append('preferredContact', data.preferredContact);
       formData.append('howHeard', data.howHeard);
-      if (data.howHeard === 'other' && data.howHeardOtherText) formData.append('howHeardOther', data.howHeardOtherText);
+      if (data.howHeard === 'other' && data.howHeardOtherText)
+        formData.append('howHeardOther', data.howHeardOtherText);
       formData.append('consent', data.consent ? 'yes' : 'no');
 
       formData.append('_subject', `Novo pedido de orçamento: ${data.projectTitle}`);
@@ -277,7 +392,6 @@ Como nos conheceu: ${data.howHeard}${data.howHeard === 'other' && data.howHeardO
       });
 
       if (response.ok) {
-        // Sucesso → abre modal
         setSuccessOpen(true);
         if (typeof window !== 'undefined' && (window as any).gtag) {
           (window as any).gtag('event', 'generate_lead', {
@@ -291,7 +405,6 @@ Como nos conheceu: ${data.howHeard}${data.howHeard === 'other' && data.howHeardO
         formRef.current?.reset();
         setStep(1);
       } else {
-        // Ler detalhe do erro p/ modal
         let reason = `HTTP ${response.status}`;
         try {
           const ct = response.headers.get('content-type') || '';
@@ -315,6 +428,76 @@ Como nos conheceu: ${data.howHeard}${data.howHeard === 'other' && data.howHeardO
     }
   };
 
+  // download de estimativa em PDF
+  const handleDownloadEstimate = async () => {
+    const jsPDFModule = await import('jspdf');
+    const autoTable = (await import('jspdf-autotable')).default;
+
+    const doc = new jsPDFModule.jsPDF();
+
+    const clientName = data.name || 'Cliente';
+    const today = new Date().toLocaleDateString('pt-PT');
+
+    // Cabeçalho
+    doc.setFontSize(18);
+    doc.text('Orçamento Estimado', 14, 20);
+
+    doc.setFontSize(11);
+    doc.text(`Cliente: ${clientName}`, 14, 30);
+    doc.text(`Projeto: ${data.projectTitle || '-'}`, 14, 36);
+    doc.text(`Data: ${today}`, 14, 42);
+
+    // Tabela de itens
+    (autoTable as any)(doc, {
+      startY: 50,
+      head: [['Nº', 'Descrição', 'Preço', 'Qt.', 'Total']],
+      body: estimate.items.map((item, i) => [
+        i + 1,
+        item.description,
+        formatCurrency(item.unitPrice),
+        item.quantity,
+        formatCurrency(item.total),
+      ]),
+      styles: {
+        fontSize: 10,
+      },
+      headStyles: {
+        fillColor: [0, 0, 0],
+        textColor: [255, 255, 255],
+      },
+    });
+
+    let finalY = (doc as any).lastAutoTable.finalY || 80;
+
+    // Totais
+    doc.setFontSize(11);
+    finalY += 8;
+    doc.text(`Materiais: ${formatCurrency(estimate.materialsTotal)}`, 14, finalY);
+    finalY += 6;
+    doc.text(`Mão de obra: ${formatCurrency(estimate.labourTotal)}`, 14, finalY);
+    finalY += 6;
+    doc.text(`Subtotal (sem IVA): ${formatCurrency(estimate.subtotal)}`, 14, finalY);
+    finalY += 6;
+    doc.text(
+      `IVA (${Math.round(estimate.vatRate * 100)}%): ${formatCurrency(estimate.vatAmount)}`,
+      14,
+      finalY
+    );
+    finalY += 6;
+    doc.text(`Total com IVA: ${formatCurrency(estimate.totalWithVat)}`, 14, finalY);
+
+    finalY += 12;
+    doc.setFontSize(9);
+    doc.text(
+      'Este documento é uma estimativa automática e não substitui um orçamento formal emitido pela Nexta Agency / empreiteiro.',
+      14,
+      finalY,
+      { maxWidth: 180 }
+    );
+
+    doc.save(`orcamento-estimado-${clientName}.pdf`);
+  };
+
   return (
     <>
       {/* SUCESSO */}
@@ -324,7 +507,8 @@ Como nos conheceu: ${data.howHeard}${data.howHeard === 'other' && data.howHeardO
         title="Pedido enviado com sucesso 🎉"
       >
         <p className="text-sm text-neutral-700">
-          Obrigado! Recebemos o seu pedido. A nossa equipa vai analisar os detalhes e entrará em contacto brevemente.
+          Obrigado! Recebemos o seu pedido. A nossa equipa vai analisar os detalhes e entrará em
+          contacto brevemente.
         </p>
         <div className="mt-5 flex flex-col gap-3 sm:flex-row">
           <a
@@ -435,7 +619,10 @@ Como nos conheceu: ${data.howHeard}${data.howHeard === 'other' && data.howHeardO
                     ['other', 'Outro'],
                   ] as [Services, string][]
                 ).map(([key, label]) => (
-                  <label key={key} className="flex items-center gap-3 rounded-lg border border-slate-300 p-3 cursor-pointer">
+                  <label
+                    key={key}
+                    className="flex items-center gap-3 rounded-lg border border-slate-300 p-3 cursor-pointer"
+                  >
                     <input
                       type="checkbox"
                       className="h-4 w-4"
@@ -456,7 +643,9 @@ Como nos conheceu: ${data.howHeard}${data.howHeard === 'other' && data.howHeardO
                     id="otherServiceText"
                     type="text"
                     value={data.otherServiceText}
-                    onChange={(e) => setData((d) => ({ ...d, otherServiceText: e.target.value }))}
+                    onChange={(e) =>
+                      setData((d) => ({ ...d, otherServiceText: e.target.value }))
+                    }
                     className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600"
                     placeholder="Ex.: demolição de parede, teto falso, AVAC, etc."
                   />
@@ -497,7 +686,9 @@ Como nos conheceu: ${data.howHeard}${data.howHeard === 'other' && data.howHeardO
                     id="propertyOtherText"
                     type="text"
                     value={data.propertyOtherText}
-                    onChange={(e) => setData((d) => ({ ...d, propertyOtherText: e.target.value }))}
+                    onChange={(e) =>
+                      setData((d) => ({ ...d, propertyOtherText: e.target.value }))
+                    }
                     className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600"
                   />
                 </div>
@@ -513,7 +704,9 @@ Como nos conheceu: ${data.howHeard}${data.howHeard === 'other' && data.howHeardO
                 rows={5}
                 required
                 value={data.projectDescription}
-                onChange={(e) => setData((d) => ({ ...d, projectDescription: e.target.value }))}
+                onChange={(e) =>
+                  setData((d) => ({ ...d, projectDescription: e.target.value }))
+                }
                 className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600"
                 placeholder="Ex.: Remodelação da cozinha (móveis, bancadas, canalização e elétrica), pintura integral, substituição de pavimento para vinílico..."
               />
@@ -616,7 +809,12 @@ Como nos conheceu: ${data.howHeard}${data.howHeard === 'other' && data.howHeardO
                 <label className="block text-sm font-semibold mb-2">Orçamento estimado *</label>
                 <select
                   value={data.budgetRange}
-                  onChange={(e) => setData((d) => ({ ...d, budgetRange: e.target.value as FormState['budgetRange'] }))}
+                  onChange={(e) =>
+                    setData((d) => ({
+                      ...d,
+                      budgetRange: e.target.value as FormState['budgetRange'],
+                    }))
+                  }
                   className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600"
                   required
                 >
@@ -631,7 +829,12 @@ Como nos conheceu: ${data.howHeard}${data.howHeard === 'other' && data.howHeardO
                 <label className="block text-sm font-semibold mb-2">Prazo desejado *</label>
                 <select
                   value={data.timeline}
-                  onChange={(e) => setData((d) => ({ ...d, timeline: e.target.value as FormState['timeline'] }))}
+                  onChange={(e) =>
+                    setData((d) => ({
+                      ...d,
+                      timeline: e.target.value as FormState['timeline'],
+                    }))
+                  }
                   className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600"
                   required
                 >
@@ -645,7 +848,12 @@ Como nos conheceu: ${data.howHeard}${data.howHeard === 'other' && data.howHeardO
                 <label className="block text-sm font-semibold mb-2">Acesso ao local *</label>
                 <select
                   value={data.siteAccess}
-                  onChange={(e) => setData((d) => ({ ...d, siteAccess: e.target.value as FormState['siteAccess'] }))}
+                  onChange={(e) =>
+                    setData((d) => ({
+                      ...d,
+                      siteAccess: e.target.value as FormState['siteAccess'],
+                    }))
+                  }
                   className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600"
                   required
                 >
@@ -655,18 +863,6 @@ Como nos conheceu: ${data.howHeard}${data.howHeard === 'other' && data.howHeardO
                 </select>
               </div>
             </div>
-
-            {/* <div>
-              <label className="block text-sm font-semibold mb-2">Anexos (plantas, fotos, medições)</label>
-              <input
-                type="file"
-                accept="image/*,.pdf,.doc,.docx"
-                multiple
-                onChange={(e) => setData((d) => ({ ...d, files: e.target.files }))}
-                className="block w-full text-sm text-slate-700 file:mr-4 file:rounded-lg file:border-0 file:bg-blue-50 file:px-4 file:py-2 file:text-blue-700 hover:file:bg-blue-100"
-              />
-              <p className="mt-2 text-xs text-slate-500">Máx. ~10MB por ficheiro (limites dependem do plano Formspree).</p>
-            </div> */}
           </section>
         )}
 
@@ -717,10 +913,17 @@ Como nos conheceu: ${data.howHeard}${data.howHeard === 'other' && data.howHeardO
               </div>
 
               <div>
-                <label className="block text-sm font-semibold mb-2">Preferência de contacto *</label>
+                <label className="block text-sm font-semibold mb-2">
+                  Preferência de contacto *
+                </label>
                 <select
                   value={data.preferredContact}
-                  onChange={(e) => setData((d) => ({ ...d, preferredContact: e.target.value as FormState['preferredContact'] }))}
+                  onChange={(e) =>
+                    setData((d) => ({
+                      ...d,
+                      preferredContact: e.target.value as FormState['preferredContact'],
+                    }))
+                  }
                   className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600"
                   required
                 >
@@ -759,7 +962,9 @@ Como nos conheceu: ${data.howHeard}${data.howHeard === 'other' && data.howHeardO
                   <input
                     type="text"
                     value={data.howHeardOtherText}
-                    onChange={(e) => setData((d) => ({ ...d, howHeardOtherText: e.target.value }))}
+                    onChange={(e) =>
+                      setData((d) => ({ ...d, howHeardOtherText: e.target.value }))
+                    }
                     className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600"
                     placeholder="Ex.: Feira, Outdoor, YouTube, etc."
                   />
@@ -797,18 +1002,42 @@ Como nos conheceu: ${data.howHeard}${data.howHeard === 'other' && data.howHeardO
                 type="text"
                 autoComplete="off"
                 value={data.company_honeypot || ''}
-                onChange={(e) => setData((d) => ({ ...d, company_honeypot: e.target.value }))}
+                onChange={(e) =>
+                  setData((d) => ({ ...d, company_honeypot: e.target.value }))
+                }
               />
+            </div>
+
+            {/* Pré-visualização da estimativa automática */}
+            <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-800">
+              <h3 className="mb-2 text-base font-semibold">Estimativa automática (indicativa)</h3>
+              <p>
+                Materiais:{' '}
+                <strong>{formatCurrency(estimate.materialsTotal)}</strong>
+              </p>
+              <p>
+                Mão de obra:{' '}
+                <strong>{formatCurrency(estimate.labourTotal)}</strong>
+              </p>
+              <p>
+                Subtotal (sem IVA):{' '}
+                <strong>{formatCurrency(estimate.subtotal)}</strong>
+              </p>
+              <p>
+                IVA ({Math.round(estimate.vatRate * 100)}%):{' '}
+                <strong>{formatCurrency(estimate.vatAmount)}</strong>
+              </p>
+              <p className="mt-1">
+                Total com IVA:{' '}
+                <strong>{formatCurrency(estimate.totalWithVat)}</strong>
+              </p>
+              <p className="mt-2 text-xs text-slate-500">
+                * Esta é uma estimativa automática aproximada com base nas informações fornecidas.
+                O orçamento final poderá ser ajustado após visita técnica / análise detalhada.
+              </p>
             </div>
           </section>
         )}
-
-        {/* Mensagens inline (opcional) */}
-        {/* {message && (
-          <div className={`p-4 rounded-lg ${message.type === 'success' ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'}`}>
-            {message.text}
-          </div>
-        )} */}
 
         {/* Navegação */}
         <div className="flex flex-col sm:flex-row gap-3 sm:justify-between">
@@ -835,18 +1064,29 @@ Como nos conheceu: ${data.howHeard}${data.howHeard === 'other' && data.howHeardO
           </div>
 
           {step === 3 && (
-            <button
-              type="submit"
-              disabled={!canGoNext || isSubmitting}
-              className="px-6 py-3 rounded-lg bg-blue-600 text-white font-semibold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {isSubmitting ? 'A enviar…' : 'Enviar pedido'}
-            </button>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <button
+                type="submit"
+                disabled={!canGoNext || isSubmitting}
+                className="px-6 py-3 rounded-lg bg-blue-600 text-white font-semibold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isSubmitting ? 'A enviar…' : 'Enviar pedido'}
+              </button>
+
+              <button
+                type="button"
+                onClick={handleDownloadEstimate}
+                className="px-6 py-3 rounded-lg border border-slate-300 font-semibold text-slate-800 hover:bg-slate-50"
+              >
+                Descarregar estimativa em PDF
+              </button>
+            </div>
           )}
         </div>
 
         <p className="text-xs text-slate-500">
-          Guardamos automaticamente o seu progresso neste dispositivo. Ao enviar, aceita os nossos termos e política de privacidade.
+          Guardamos automaticamente o seu progresso neste dispositivo. Ao enviar, aceita os nossos
+          termos e política de privacidade.
         </p>
       </form>
     </>
